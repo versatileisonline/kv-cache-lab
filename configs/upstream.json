@@ -1,0 +1,7 @@
+{
+  "name": "KVCache-Factory",
+  "url": "https://github.com/Zefan-Cai/KVCache-Factory.git",
+  "commit": "68cd9551a63fedf362ddb0edb008badd04c24996",
+  "checkout_directory": "third_party/KVCache-Factory",
+  "integration_status": "Pinned for later compression adapters. The initial FullKV runner uses unmodified Hugging Face attention."
+}
