@@ -1,0 +1,40 @@
+# Python environments and generated files
+.venv/
+.venv-*/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store
+.idea/
+.vscode/
+.ipynb_checkpoints/
+
+# Downloaded models, datasets, and upstream source
+.cache/
+models/
+data/
+third_party/
+*.safetensors
+*.pt
+*.pth
+*.bin
+
+# Run artifacts stay local; explicitly curated examples can be committed
+results/runs/
+results/raw/
+*.log
+slurm-*.out
