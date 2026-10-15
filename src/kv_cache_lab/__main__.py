@@ -13,11 +13,21 @@ from .prompts import cases, preview_case
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="FullKV pilot setup and execution")
-    parser.add_argument("command", choices=("validate", "preview", "run"))
+    parser.add_argument("command", choices=("validate", "preview", "run", "rescore"))
     parser.add_argument("--config", type=Path, default=Path("configs/fullkv-pilot.json"))
+    parser.add_argument("--predictions", type=Path, help="Saved predictions.jsonl for the rescore command")
     parser.add_argument("--output", type=Path, help="New directory; existing results are never overwritten")
     args = parser.parse_args(argv)
     try:
+        if args.command == "rescore":
+            if args.predictions is None:
+                raise ValueError("rescore requires --predictions.")
+            from .rescore import rescore_predictions
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            output = args.output or Path("results/runs") / f"rescored-{stamp}-{uuid4().hex[:8]}"
+            summary = rescore_predictions(args.predictions, output)
+            print(json.dumps({"output_directory": str(output.resolve()), **summary}, indent=2))
+            return 0
         config = load_config(args.config)
         if args.command == "validate":
             print(f"Valid configuration: {config['experiment_id']} ({config['method']})")

@@ -42,3 +42,7 @@ The runner requires CUDA, keeps FP16 weights on one GPU, checks exact input toke
 | `pyproject.toml`, `uv.lock` | Dependency declarations and resolved lock |
 
 The upstream [KVCache-Factory](https://github.com/Zefan-Cai/KVCache-Factory) revision is pinned for later method adapters. The first FullKV runner uses standard Hugging Face attention without compression patches. The pilot tests integration; its short-answer timings are not the planned performance benchmark.
+
+## Scoring
+
+The runner reports strict response accuracy and a separate passkey accuracy allowing one final period. Both require the complete response to match the documented form. See [scoring fields and offline rescoring](results/README.md#scoring-fields). Saved predictions can be rescored into a new directory without rerunning the model or changing the original run.

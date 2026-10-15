@@ -19,3 +19,17 @@ Only intentionally reviewed small examples belong in `results/examples/`. Includ
 `passkey_correct`, `passkey_extracted_code`, and summary `passkey_accuracy` use `single-final-period-v1`: the same full-response rule with one optional period immediately after the code. Explanations, multiple answers, other punctuation, and wrong digits still fail. This is not arbitrary code extraction from prose.
 
 New GPU runs record `scoring_rules` in metadata and summaries, and both correctness fields in prediction/CSV records. Accuracies use completed predictions as the denominator; runtime failures are reported separately. Older files remain valid and do not acquire new fields automatically. Do not overwrite them when applying a later scoring rule. Ten pilot examples do not establish general model quality.
+
+## Rescore saved predictions
+
+From the repository root, with `run_dir` set to an existing run directory:
+
+```bash
+.venv/bin/python -m kv_cache_lab rescore \
+  --predictions "$run_dir/predictions.jsonl" \
+  --output "${run_dir}-rescored"
+```
+
+This uses only the standard library and performs no model inference. On ARC, use an allocated compute shell. The output must be a new directory outside the original run directory. It contains `scores.jsonl` and `summary.json`; input predictions, original summaries, and GPU measurements are unchanged. A repeated command with the same output path is refused.
+
+Rescoring reports both metrics with rule versions, source-file and scoring-code hashes, and `analysis_type=post_hoc`. This additional analysis is not a new independent evaluation. `strict_score_mismatches` flags disagreement with an original `correct` field, when present; investigate any nonzero value. Failed predictions are counted separately and excluded from both accuracy denominators; a failed-only file reports null accuracies. Malformed, empty, or duplicate-ID inputs are rejected.
