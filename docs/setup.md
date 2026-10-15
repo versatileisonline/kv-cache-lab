@@ -1,6 +1,6 @@
 # Setup
 
-ARC is the intended compute platform. Class resource access is pending the professor's response. Continue local work now; confirm ARC GPU, allocation, modules, and scheduler settings after access is granted. No account names or scheduler directives are assumed here.
+For Virginia Tech ARC, follow the [generic ARC setup guide](arc.md). Use your own PID and approved allocation; enter account-specific settings in your terminal rather than committed configuration files.
 
 ## uv workflow
 

@@ -2,7 +2,7 @@
 
 Benchmarking and optimizing LLM KV caches to evaluate tradeoffs between GPU memory usage, generation speed and answer quality.
 
-The initial setup provides a reproducible FullKV passkey-retrieval pilot. ARC is the intended compute platform; resource access and actual GPU validation are pending. H2O, PyramidKV, and KV quantization integrations follow after the baseline works.
+The repository provides a FullKV passkey-retrieval pilot. See the [generic ARC setup guide](docs/arc.md) to run it using your own Virginia Tech account and allocation.
 
 ## Local setup
 
