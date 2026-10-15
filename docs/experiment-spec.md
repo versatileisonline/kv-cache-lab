@@ -29,7 +29,9 @@ ARC setup uses each researcher's own account and approved allocation; see the [g
 
 Use deterministic seeded prose filler and a single marked passkey. The GPU path renders the pinned chat template with a fixed date, reserves space for the marker/question, then fills the remaining token slots. Store the exact input IDs and decoded prompt; do not retokenize the decoded prompt for evaluation. Record the actual marker index and position, and verify the code survives construction. The offline preview shows passage text and intended positions; it does not claim tokenizer-verified lengths.
 
-Score the entire response as either the eight-digit code or `Answer: <code>`, allowing whitespace only around the optional prefix/code. Explanations, multiple codes, punctuation, and incorrect digits fail exact match. Preserve incorrect predictions and runtime failures in output.
+Report two versioned scores on the entire response. `strict-v1` accepts either the eight-digit code or `Answer: <code>`, allowing whitespace around the optional prefix/code. `single-final-period-v1` additionally permits one period immediately after the code. Both reject explanations, multiple codes, other punctuation, Unicode digits, and incorrect digits. Leading zeroes are significant. The prefix is case-sensitive.
+
+`correct` and `accuracy` retain the original strict definition. `passkey_correct` and `passkey_accuracy` report the separately named punctuation-tolerant metric. Record `scoring_rules` with each run. Preserve incorrect predictions and runtime failures. Changing a scoring rule creates a new named version; it does not replace an earlier run's score. Freeze the rules before evaluating fresh data.
 
 These ten examples belong to the pilot split and are intended for integration checks.
 

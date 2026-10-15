@@ -27,7 +27,7 @@ def file_hash(path):
 
 def append_metrics(path, row):
     fields = [
-        "prompt_id", "status", "correct", "input_tokens", "output_tokens",
+        "prompt_id", "status", "correct", "passkey_correct", "input_tokens", "output_tokens",
         "actual_position", "cache_reused", "prefill_cache_bytes", "final_cache_bytes",
         "ttft_ms", "decode_ms", "decode_tokens_per_second",
         "prefill_peak_allocated_bytes", "prefill_peak_reserved_bytes",

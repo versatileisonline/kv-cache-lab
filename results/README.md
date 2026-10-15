@@ -10,4 +10,12 @@ Byte counts are raw bytes (divide by 1,048,576 for MiB). `ttft_ms` covers prefil
 
 The final cache contains states through the last processed token, which is normally one fewer than the number of selected output tokens. The selected last/EOS token need not be fed back through the model. See the recorded cache shapes and `decode_forward_calls`.
 
-Only intentionally reviewed small examples belong in `results/examples/`. Include their provenance and label synthetic/offline fixtures explicitly. No measured GPU sample is committed yet because ARC access is pending.
+Only intentionally reviewed small examples belong in `results/examples/`. Include their provenance and label synthetic/offline fixtures explicitly. Keep measured run artifacts private unless explicitly reviewed for publication.
+
+## Scoring fields
+
+`correct`, `extracted_code`, and summary `accuracy` retain `strict-v1`: an eight-digit code with optional `Answer:` prefix and surrounding whitespace. A final period fails this strict rule.
+
+`passkey_correct`, `passkey_extracted_code`, and summary `passkey_accuracy` use `single-final-period-v1`: the same full-response rule with one optional period immediately after the code. Explanations, multiple answers, other punctuation, and wrong digits still fail. This is not arbitrary code extraction from prose.
+
+New GPU runs record `scoring_rules` in metadata and summaries, and both correctness fields in prediction/CSV records. Accuracies use completed predictions as the denominator; runtime failures are reported separately. Older files remain valid and do not acquire new fields automatically. Do not overwrite them when applying a later scoring rule. Ten pilot examples do not establish general model quality.

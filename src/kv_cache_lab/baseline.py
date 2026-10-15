@@ -11,7 +11,7 @@ from pathlib import Path
 from .artifacts import append_jsonl, append_metrics, file_hash, write_json
 from .inference import greedy_decode
 from .prompts import cases, tokenized_case
-from .scoring import score_passkey
+from .scoring import SCORING_RULES, score_passkey
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -26,6 +26,7 @@ def command_output(args):
 def environment_metadata(config):
     return {
         "schema_version": 1, "mode": "gpu_pilot", "config": config,
+        "scoring_rules": SCORING_RULES,
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "python": sys.version, "hostname": platform.node(), "system": platform.platform(),
         "git_revision": command_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
@@ -56,7 +57,7 @@ def eos_token_ids(model, tokenizer):
 def run_pilot(config, output):
     metadata = environment_metadata(config)
     write_json(output / "metadata.json", metadata)
-    summary = {"schema_version": 1, "mode": "gpu_pilot", "status": "running", "attempted": 0, "completed": 0, "correct": 0, "failures": 0, "performance_claims": False}
+    summary = {"schema_version": 1, "mode": "gpu_pilot", "status": "running", "attempted": 0, "completed": 0, "correct": 0, "failures": 0, "performance_claims": False, "passkey_correct": 0, "passkey_accuracy": None, "scoring_rules": SCORING_RULES}
     write_json(output / "summary.json", summary)
     phase = "environment"
     current_prompt = None
@@ -135,9 +136,11 @@ def run_pilot(config, output):
             append_metrics(output / "metrics.csv", row)
             summary["completed"] += 1
             summary["correct"] += int(score["correct"])
+            summary["passkey_correct"] += int(score["passkey_correct"])
             summary["accuracy"] = summary["correct"] / summary["completed"]
+            summary["passkey_accuracy"] = summary["passkey_correct"] / summary["completed"]
             write_json(output / "summary.json", summary)
-            print(f"{current_prompt}: correct={score['correct']}, input_tokens={prompt['input_tokens']}", flush=True)
+            print(f"{current_prompt}: strict_correct={score['correct']}, passkey_correct={score['passkey_correct']}, input_tokens={prompt['input_tokens']}", flush=True)
         summary["status"] = "completed"
         return summary
     except Exception as error:
