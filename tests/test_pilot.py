@@ -8,6 +8,7 @@ from pathlib import Path
 
 from kv_cache_lab.__main__ import main
 from kv_cache_lab.config import load_config, validate_config
+from kv_cache_lab.methods import validate_method
 from kv_cache_lab.prompts import cases, tokenized_case
 from kv_cache_lab.scoring import score_passkey
 
@@ -37,12 +38,37 @@ class PilotTests(unittest.TestCase):
         for response in ("00123457", "The answer is 00123456", "Answer: 00123456.", "00123456 00123456", "１２３４５６７８", "00123456\nExplanation"):
             self.assertFalse(score_passkey(response, "00123456")["correct"])
 
-    def test_invalid_method_revision_and_sampling_are_rejected(self):
-        for section, key, value in ((None, "method", "h2o"), ("model", "revision", "main"), ("generation", "do_sample", True), ("dataset", "positions", [False]), ("measurement", "performance_claims", True)):
+    def test_invalid_method_revision_hardware_and_sampling_are_rejected(self):
+        for section, key, value in ((None, "method", "fullkv"), (None, "method", {"name": "streamingllm", "params": {}}), (None, "method", {"name": "fullkv", "params": {"bits": 4}}), ("hardware", "gpu_name_contains", "T4"), ("dataset", "input_tokens", 2048), ("dataset", "input_tokens", [2048, 2048]), ("model", "revision", "main"), ("generation", "do_sample", True), ("dataset", "positions", [False]), ("measurement", "performance_claims", True)):
             config = copy.deepcopy(self.config)
             (config if section is None else config[section])[key] = value
             with self.assertRaises(ValueError):
                 validate_config(config)
+
+    def test_planned_methods_validate_parameters_but_are_not_runnable_yet(self):
+        planned = (
+            {"name": "h2o", "params": {"budget_fraction": 0.25, "recent_fraction": 0.5}},
+            {"name": "kivi", "params": {"bits": 4, "group_size": 32, "residual_length": 128}},
+        )
+        for method in planned:
+            with self.assertRaisesRegex(ValueError, "not implemented"):
+                validate_method(method)
+        for method in ({"name": "h2o", "params": {"budget_fraction": 1.5, "recent_fraction": 0.5}}, {"name": "kivi", "params": {"bits": 3, "group_size": 32, "residual_length": 128}}):
+            with self.assertRaisesRegex(ValueError, "must be"):
+                validate_method(method)
+
+    def test_multiple_lengths_get_unique_codes_ids_and_exact_budgets(self):
+        config = copy.deepcopy(self.config)
+        config["dataset"].update({"split": "final", "num_examples": 3, "input_tokens": [1024, 2048]})
+        validate_config(config)
+        generated = list(cases(config))
+        self.assertEqual(len(generated), 6)
+        self.assertEqual(len({case["prompt_id"] for case in generated}), 6)
+        self.assertEqual(len({case["seed"] for case in generated}), 6)
+        self.assertTrue(all(case["prompt_id"].startswith("final-") for case in generated))
+        for case in generated:
+            prompt = tokenized_case(case, config, CharacterTokenizer())
+            self.assertEqual(len(prompt["input_ids"]), case["target_input_tokens"])
 
     def test_prompts_are_deterministic_and_match_total_token_budget(self):
         first = list(cases(self.config))

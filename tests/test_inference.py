@@ -3,6 +3,7 @@ import importlib.util
 import unittest
 
 from kv_cache_lab.inference import cache_stats, greedy_decode
+from kv_cache_lab.methods import cache_factory
 
 HAS_INFERENCE = all(importlib.util.find_spec(name) is not None for name in ("torch", "transformers"))
 
@@ -42,6 +43,13 @@ class InferenceTests(unittest.TestCase):
         self.assertEqual(result["output_tokens"], 1)
         self.assertFalse(result["cache_reused"])
         self.assertEqual(result["final_cache"]["tokens_per_layer"], [5, 5])
+
+    def test_registered_fullkv_cache_matches_default_decoding(self):
+        new_cache = cache_factory({"name": "fullkv", "params": {}}, self.model)
+        default = greedy_decode(self.model, self.inputs, 5, [])
+        explicit = greedy_decode(self.model, self.inputs, 5, [], cache=new_cache())
+        self.assertEqual(explicit["output_ids"], default["output_ids"])
+        self.assertEqual(explicit["final_cache"], default["final_cache"])
 
     def test_aliases_count_physical_storage_once(self):
         tensor = self.torch.ones((1, 2, 3, 4))

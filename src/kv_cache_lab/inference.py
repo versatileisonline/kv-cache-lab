@@ -25,14 +25,16 @@ def cache_stats(cache):
     return {"storage_bytes": storage_bytes, "layer_shapes": shapes, "tokens_per_layer": token_counts}
 
 
-def greedy_decode(model, input_ids, max_new_tokens, eos_ids, *, measure_cuda=False):
+def greedy_decode(model, input_ids, max_new_tokens, eos_ids, *, cache=None, measure_cuda=False):
+    """Pass a fresh method cache per request; the default is an uncompressed DynamicCache."""
     import torch
     from transformers import DynamicCache
 
     if measure_cuda and input_ids.device.type != "cuda":
         raise ValueError("CUDA measurement requires CUDA input tensors.")
     eos_ids = set(eos_ids)
-    cache = DynamicCache()
+    if cache is None:
+        cache = DynamicCache()
     mask = torch.ones_like(input_ids)
     generated = []
     diagnostics = {}

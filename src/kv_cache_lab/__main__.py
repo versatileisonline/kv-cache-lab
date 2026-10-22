@@ -30,7 +30,7 @@ def main(argv=None):
             return 0
         config = load_config(args.config)
         if args.command == "validate":
-            print(f"Valid configuration: {config['experiment_id']} ({config['method']})")
+            print(f"Valid configuration: {config['experiment_id']} ({config['method']['name']})")
             return 0
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         output = create_run_directory(args.output or Path("results/runs") / f"{config['experiment_id']}-{args.command}-{stamp}-{uuid4().hex[:8]}")
@@ -38,7 +38,7 @@ def main(argv=None):
         if args.command == "preview":
             for case in cases(config):
                 append_jsonl(output / "prompts.jsonl", preview_case(case))
-            summary = {"mode": "offline_preview", "status": "completed", "examples": config["dataset"]["num_examples"], "tokenizer_verified": False, "gpu_measurements": None, "accuracy": None}
+            summary = {"mode": "offline_preview", "status": "completed", "examples": config["dataset"]["num_examples"] * len(config["dataset"]["input_tokens"]), "tokenizer_verified": False, "gpu_measurements": None, "accuracy": None}
             write_json(output / "summary.json", summary)
         else:
             from .baseline import run_pilot

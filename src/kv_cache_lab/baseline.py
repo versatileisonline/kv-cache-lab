@@ -5,11 +5,13 @@ import os
 import platform
 import subprocess
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .artifacts import append_jsonl, append_metrics, file_hash, write_json
 from .inference import greedy_decode
+from .methods import cache_factory
 from .prompts import cases, tokenized_case
 from .scoring import SCORING_RULES, score_passkey
 
@@ -25,7 +27,7 @@ def command_output(args):
 
 def environment_metadata(config):
     return {
-        "schema_version": 1, "mode": "gpu_pilot", "config": config,
+        "schema_version": 2, "mode": "gpu_pilot", "config": config,
         "scoring_rules": SCORING_RULES,
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "python": sys.version, "hostname": platform.node(), "system": platform.platform(),
@@ -57,7 +59,7 @@ def eos_token_ids(model, tokenizer):
 def run_pilot(config, output):
     metadata = environment_metadata(config)
     write_json(output / "metadata.json", metadata)
-    summary = {"schema_version": 1, "mode": "gpu_pilot", "status": "running", "attempted": 0, "completed": 0, "correct": 0, "failures": 0, "performance_claims": False, "passkey_correct": 0, "passkey_accuracy": None, "scoring_rules": SCORING_RULES}
+    summary = {"schema_version": 2, "mode": "gpu_pilot", "status": "running", "method": config["method"], "by_input_tokens": {}, "attempted": 0, "completed": 0, "correct": 0, "failures": 0, "performance_claims": False, "passkey_correct": 0, "passkey_accuracy": None, "scoring_rules": SCORING_RULES}
     write_json(output / "summary.json", summary)
     phase = "environment"
     current_prompt = None
@@ -76,6 +78,9 @@ def run_pilot(config, output):
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         properties = torch.cuda.get_device_properties(0)
+        required_gpu = config["hardware"]["gpu_name_contains"]
+        if required_gpu not in properties.name:
+            raise RuntimeError(f"Official runs require an {required_gpu}; cuda:0 is {properties.name}. Request the A100 partition.")
         metadata.update({
             "torch_version": torch.__version__, "cuda_runtime": torch.version.cuda,
             "selected_device": "cuda:0", "selected_gpu_name": properties.name,
@@ -94,9 +99,10 @@ def run_pilot(config, output):
         ).to("cuda:0").eval()
         if any(parameter.device != torch.device("cuda:0") or parameter.dtype != torch.float16 for parameter in model.parameters()):
             raise RuntimeError("All model parameters must remain FP16 on cuda:0.")
-        if config["dataset"]["input_tokens"] + config["generation"]["max_new_tokens"] > model.config.max_position_embeddings:
+        if max(config["dataset"]["input_tokens"]) + config["generation"]["max_new_tokens"] > model.config.max_position_embeddings:
             raise ValueError("Input plus output exceeds the model context limit.")
         stop_ids = eos_token_ids(model, tokenizer)
+        new_cache = cache_factory(config["method"], model)
         metadata.update({"resolved_model_revision": getattr(model.config, "_commit_hash", None), "eos_token_ids": stop_ids})
         write_json(output / "metadata.json", metadata)
         phase = "prompt_construction"
@@ -104,10 +110,12 @@ def run_pilot(config, output):
         for prompt in prompts:
             append_jsonl(output / "prompts.jsonl", prompt)
         phase = "warmup"
-        first_ids = torch.tensor([prompts[0]["input_ids"]], dtype=torch.long, device="cuda:0")
-        for _ in range(config["measurement"]["warmup_runs"]):
-            greedy_decode(model, first_ids, config["generation"]["max_new_tokens"], stop_ids)
-        del first_ids
+        warmup_prompts = {prompt["target_input_tokens"]: prompt for prompt in reversed(prompts)}
+        for prompt in warmup_prompts.values():
+            warmup_ids = torch.tensor([prompt["input_ids"]], dtype=torch.long, device="cuda:0")
+            for _ in range(config["measurement"]["warmup_runs"]):
+                greedy_decode(model, warmup_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache())
+            del warmup_ids
         for prompt in prompts:
             current_prompt = prompt["prompt_id"]
             summary["attempted"] += 1
@@ -116,7 +124,7 @@ def run_pilot(config, output):
             torch.cuda.empty_cache()
             input_ids = torch.tensor([prompt["input_ids"]], dtype=torch.long, device="cuda:0")
             phase = "inference"
-            result = greedy_decode(model, input_ids, config["generation"]["max_new_tokens"], stop_ids, measure_cuda=True)
+            result = greedy_decode(model, input_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache(), measure_cuda=True)
             del input_ids
             phase = "scoring"
             response = tokenizer.decode(result["output_ids"], skip_special_tokens=True)
@@ -139,12 +147,18 @@ def run_pilot(config, output):
             summary["passkey_correct"] += int(score["passkey_correct"])
             summary["accuracy"] = summary["correct"] / summary["completed"]
             summary["passkey_accuracy"] = summary["passkey_correct"] / summary["completed"]
+            group = summary["by_input_tokens"].setdefault(str(prompt["input_tokens"]), {"completed": 0, "correct": 0, "passkey_correct": 0})
+            group["completed"] += 1
+            group["correct"] += int(score["correct"])
+            group["passkey_correct"] += int(score["passkey_correct"])
             write_json(output / "summary.json", summary)
             print(f"{current_prompt}: strict_correct={score['correct']}, passkey_correct={score['passkey_correct']}, input_tokens={prompt['input_tokens']}", flush=True)
         summary["status"] = "completed"
         return summary
     except Exception as error:
         phase = getattr(error, "kv_phase", phase)
+        # Terminal only: artifacts omit raw exception text in case it contains credentials.
+        traceback.print_exc(file=sys.stderr)
         failure = {"prompt_id": current_prompt, "status": "failed", "failure_phase": phase, "error_type": type(error).__name__}
         append_jsonl(output / "predictions.jsonl", failure)
         append_metrics(output / "metrics.csv", failure)

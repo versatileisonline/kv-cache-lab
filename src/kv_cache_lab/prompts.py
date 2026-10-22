@@ -14,16 +14,22 @@ FILLER = (
 
 
 def cases(config):
+    """num_examples per input length; codes and filler seeds never repeat across lengths."""
     rng = random.Random(config["seed"])
-    positions = config["dataset"]["positions"]
-    for index in range(config["dataset"]["num_examples"]):
-        yield {
-            "prompt_id": f"pilot-{config['seed']}-{index:04d}",
-            "split": "pilot",
-            "seed": config["seed"] + index,
-            "expected_code": f"{rng.randrange(100_000_000):08d}",
-            "requested_position": positions[index % len(positions)],
-        }
+    dataset = config["dataset"]
+    positions = dataset["positions"]
+    count = 0
+    for length in dataset["input_tokens"]:
+        for index in range(dataset["num_examples"]):
+            yield {
+                "prompt_id": f"{dataset['split']}-{config['seed']}-{length}-{index:04d}",
+                "split": dataset["split"],
+                "seed": config["seed"] + count,
+                "target_input_tokens": length,
+                "expected_code": f"{rng.randrange(100_000_000):08d}",
+                "requested_position": positions[index % len(positions)],
+            }
+            count += 1
 
 
 def filler_text(seed):
@@ -55,7 +61,7 @@ def tokenized_case(case, config, tokenizer):
     prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
     suffix_ids = tokenizer.encode(suffix, add_special_tokens=False)
     marker_ids = tokenizer.encode(marker(case), add_special_tokens=False)
-    target = config["dataset"]["input_tokens"]
+    target = case["target_input_tokens"]
     available = target - len(prefix_ids) - len(suffix_ids) - len(marker_ids)
     if available < 0:
         raise ValueError("The template, marker, and question exceed the input budget.")

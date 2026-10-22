@@ -87,7 +87,7 @@ bash scripts/run_baseline.sh --output "$run_dir"
 cat "$run_dir/summary.json"
 ```
 
-The runner loads the model/tokenizer revision in `configs/fullkv-pilot.json`. It runs ten 2,048-token retrieval prompts with FP16 weights/cache, SDPA, batch size one, greedy decoding, seed 42, two warmups, and up to 32 output tokens. Downloads and model loading are outside inference timing.
+The runner loads the model/tokenizer revision in `configs/fullkv-pilot.json`. It runs ten 2,048-token retrieval prompts with FP16 weights/cache, SDPA, batch size one, greedy decoding, seed 42, two warmups, and up to 32 output tokens. Downloads and model loading are outside inference timing. The runner refuses GPUs other than an A100, because official comparisons use one GPU type.
 
 Review predictions, accuracy, cache reuse, memory, and the recorded environment in the run directory. Compare only runs with matching source/configuration and compatible hardware. Short-answer timing is diagnostic.
 

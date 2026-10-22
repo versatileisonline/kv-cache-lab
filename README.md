@@ -2,7 +2,7 @@
 
 Benchmarking and optimizing LLM KV caches to evaluate tradeoffs between GPU memory usage, generation speed and answer quality.
 
-The repository provides a FullKV passkey-retrieval pilot. See the [generic ARC setup guide](docs/arc.md) to run it using your own Virginia Tech account and allocation.
+The repository provides a FullKV passkey-retrieval pilot and the shared harness for comparing FullKV, H2O, and KIVI-style caches. Official runs use one ARC A100; see the [experiment specification](docs/experiment-spec.md). See the [generic ARC setup guide](docs/arc.md) to run it using your own Virginia Tech account and allocation.
 
 ## Local setup
 
@@ -34,7 +34,7 @@ The runner requires CUDA, keeps FP16 weights on one GPU, checks exact input toke
 | Path | Purpose |
 | --- | --- |
 | `configs/` | Pilot settings and pinned upstream revision |
-| `src/kv_cache_lab/` | Configuration, prompts, scoring, and baseline runner |
+| `src/kv_cache_lab/` | Configuration, method registry, prompts, scoring, and runner |
 | `scripts/` | uv setup, upstream checkout, and pilot command |
 | `docs/` | Setup and [experiment specification](docs/experiment-spec.md) |
 | `tests/` | Offline correctness checks; optional tiny-model CPU checks |
