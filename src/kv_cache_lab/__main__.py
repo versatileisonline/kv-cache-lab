@@ -12,13 +12,21 @@ from .prompts import cases, preview_case
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="FullKV pilot setup and execution")
-    parser.add_argument("command", choices=("validate", "preview", "run", "rescore"))
+    parser = argparse.ArgumentParser(description="KV-cache experiment setup, execution, and analysis")
+    parser.add_argument("command", choices=("validate", "preview", "run", "rescore", "aggregate"))
     parser.add_argument("--config", type=Path, default=Path("configs/fullkv-pilot.json"))
     parser.add_argument("--predictions", type=Path, help="Saved predictions.jsonl for the rescore command")
-    parser.add_argument("--output", type=Path, help="New directory; existing results are never overwritten")
+    parser.add_argument("--runs", type=Path, nargs="+", help="Run directories, or folders of them, for the aggregate command")
+    parser.add_argument("--output", type=Path, help="New directory (or CSV file for aggregate); existing results are never overwritten")
     args = parser.parse_args(argv)
     try:
+        if args.command == "aggregate":
+            if not args.runs or args.output is None:
+                raise ValueError("aggregate requires --runs and --output.")
+            from .aggregate import aggregate
+            rows = aggregate(args.runs, args.output)
+            print(f"Wrote {len(rows)} rows to {args.output.resolve()}")
+            return 0
         if args.command == "rescore":
             if args.predictions is None:
                 raise ValueError("rescore requires --predictions.")

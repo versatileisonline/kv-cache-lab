@@ -60,6 +60,8 @@ Validate FullKV and each method on the 10 pilot cases before freezing the final 
 - Every method nearly perfect: make the pilot harder (longer inputs, smaller budgets, or decoy codes) and record the change here.
 - Checks pass: freeze the 180 final prompts and the provisional parameters.
 
+The draft final configurations are in `configs/final/` (seed 1000, 60 prompts per length, 20 per length and position; no seed or passkey overlaps the pilot). `scripts/submit_set.sh` refuses to submit them until the gate passes. To freeze: apply any parameter changes from the gate to `configs/final/`, record them here, then commit an empty `configs/final/FROZEN` file together with them. After that, the final configurations must not change.
+
 ## Metrics and boundaries
 
 Quality runs save exact-match correctness, input/output counts, output text, and failures per prompt. Record raw stored K/V bytes and shapes after prefill and after the last cache update, separately from per-process CUDA allocated/reserved peaks. Count unique physical tensor storage to avoid double-counting aliases. Compressed methods must also count their metadata (quantization scales/zero-points, eviction scores).

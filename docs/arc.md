@@ -89,18 +89,22 @@ cat "$run_dir/summary.json"
 
 The runner loads the model/tokenizer revision in `configs/fullkv-pilot.json`. It runs ten 2,048-token retrieval prompts with FP16 weights/cache, SDPA, batch size one, greedy decoding, seed 42, two warmups, and up to 32 output tokens. Downloads and model loading are outside inference timing. The runner refuses GPUs other than an A100, because official comparisons use one GPU type.
 
-Other methods run the same way with a different configuration. The pilot set covers FullKV, H2O at 25% and 12.5% budgets, and KIVI at 4 and 2 bits, all on the same 2K/4K/8K prompts:
+## Run a whole set of methods
+
+Each folder under `configs/` is a set: `configs/pilot/` holds FullKV, H2O at 25% and 12.5% budgets, and KIVI at 4 and 2 bits, all on the same 2K/4K/8K prompts. One command submits a set as a Slurm array, one A100 per method. Run it on the login node after exporting `KV_LAB_SLURM_ACCOUNT`, `KV_LAB_WORKDIR`, `UV_CACHE_DIR`, and `HF_HUB_CACHE`; the jobs inherit them:
 
 ```bash
-for name in fullkv h2o-b25 h2o-b12 kivi-4bit kivi-2bit; do
-  sbatch --account="$KV_LAB_SLURM_ACCOUNT" --partition=a100_normal_q \
-    --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=32G --gres=gpu:1 --time=01:00:00 \
-    --job-name="pilot-$name" --output="$HOME/pilot-$name-%j.log" \
-    --wrap "bash scripts/run_baseline.sh --config configs/pilot/$name.json --output \"$KV_LAB_WORKDIR/runs/pilot-$name-\$SLURM_JOB_ID\""
-done
+bash scripts/submit_set.sh configs/pilot --time=01:00:00
 ```
 
-Submit from the repository directory after exporting `KV_LAB_WORKDIR`, `UV_CACHE_DIR`, and `HF_HUB_CACHE`; batch jobs inherit them. `squeue -u "$USER"` lists queued (`PD`) and running (`R`) jobs, and `sacct -j <jobid>` shows the final state.
+Extra arguments go to `sbatch` (the default limit is two hours). The script prints the array job ID, where runs and logs go, and the command that combines the finished runs into one CSV:
+
+```bash
+uv run --locked --extra inference python -m kv_cache_lab aggregate \
+  --runs "$KV_LAB_WORKDIR/runs/pilot-<jobid>" --output "$KV_LAB_WORKDIR/results/pilot-<jobid>.csv"
+```
+
+The CSV has one row per method and input length: accuracy, cache bytes and their ratio to FullKV, peak memory, and median timings (diagnostic only). `squeue -u "$USER"` lists queued (`PD`) and running (`R`) tasks, and `sacct -j <jobid>` shows their final states. `configs/final/` is refused until the pilot gate passes ([experiment spec](experiment-spec.md#pilot-gate)).
 
 Review predictions, accuracy, cache reuse, memory, and the recorded environment in the run directory. Compare only runs with matching source/configuration and compatible hardware. Short-answer timing is diagnostic.
 

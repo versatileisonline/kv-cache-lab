@@ -61,6 +61,21 @@ class PilotTests(unittest.TestCase):
         # The 2K pilot prompts are unchanged from the original FullKV pilot.
         self.assertEqual(prompts["fullkv"][:10], list(cases(self.config)))
 
+    def test_final_configs_match_pilot_methods_with_fresh_prompts(self):
+        pilot = {path.name: load_config(path) for path in (ROOT / "configs/pilot").glob("*.json")}
+        final = {path.name: load_config(path) for path in (ROOT / "configs/final").glob("*.json")}
+        self.assertEqual(set(final), set(pilot))
+        final_cases = list(cases(final["fullkv.json"]))
+        pilot_cases = list(cases(pilot["fullkv.json"]))
+        self.assertEqual(len(final_cases), 180)
+        self.assertEqual(len({(case["target_input_tokens"], case["requested_position"]) for case in final_cases}), 9)
+        self.assertFalse({case["seed"] for case in final_cases} & {case["seed"] for case in pilot_cases})
+        self.assertFalse({case["expected_code"] for case in final_cases} & {case["expected_code"] for case in pilot_cases})
+        for name, config in final.items():
+            self.assertEqual(config["dataset"]["split"], "final")
+            self.assertEqual(config["method"], pilot[name]["method"])
+            self.assertEqual(list(cases(config)), final_cases)
+
     def test_multiple_lengths_get_unique_codes_ids_and_exact_budgets(self):
         config = copy.deepcopy(self.config)
         config["dataset"].update({"split": "final", "num_examples": 3, "input_tokens": [1024, 2048]})

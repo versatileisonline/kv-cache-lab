@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "experiment_id": "final-h2o-b25",
+  "platform": "arc",
+  "hardware": {
+    "gpu_name_contains": "A100"
+  },
+  "method": {
+    "name": "h2o",
+    "params": {
+      "budget_fraction": 0.25,
+      "recent_fraction": 0.5
+    }
+  },
+  "seed": 1000,
+  "model": {
+    "id": "meta-llama/Llama-3.2-3B-Instruct",
+    "revision": "0cb88a4f764b7a12671c53f0838cd831a0843b95",
+    "dtype": "float16",
+    "attention_backend": "sdpa"
+  },
+  "dataset": {
+    "task": "passkey",
+    "split": "final",
+    "num_examples": 60,
+    "input_tokens": [
+      2048,
+      4096,
+      8192
+    ],
+    "positions": [
+      0.2,
+      0.5,
+      0.8
+    ],
+    "template_date": "08 Oct 2026"
+  },
+  "generation": {
+    "max_new_tokens": 32,
+    "do_sample": false,
+    "batch_size": 1
+  },
+  "measurement": {
+    "warmup_runs": 2,
+    "performance_claims": false
+  }
+}
