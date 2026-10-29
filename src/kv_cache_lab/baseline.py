@@ -1,4 +1,4 @@
-"""FullKV quality pilot. CUDA failures are recorded, never replaced by CPU runs."""
+"""Passkey quality pilot for one KV-cache method. CUDA failures are recorded, never replaced by CPU runs."""
 import gc
 import importlib.metadata
 import os
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .artifacts import append_jsonl, append_metrics, file_hash, write_json
 from .inference import greedy_decode
-from .methods import cache_factory
+from .methods import METHODS, cache_factory
 from .prompts import cases, tokenized_case
 from .scoring import SCORING_RULES, score_passkey
 
@@ -36,7 +36,7 @@ def environment_metadata(config):
         "uv_lock_sha256": file_hash(ROOT / "uv.lock"),
         "upstream_manifest_sha256": file_hash(ROOT / "configs/upstream.json"),
         "upstream_revision": command_output(["git", "-C", str(ROOT / "third_party/KVCache-Factory"), "rev-parse", "HEAD"]),
-        "upstream_used_for_inference": False,
+        "upstream_used_for_inference": METHODS[config["method"]["name"]]["upstream"],
         "packages": sorted({f"{d.metadata['Name']}=={d.version}" for d in importlib.metadata.distributions()}),
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "gpu_inventory_before": command_output(["nvidia-smi", "--query-gpu=name,uuid,memory.total,driver_version", "--format=csv,noheader"]),
@@ -114,7 +114,7 @@ def run_pilot(config, output):
         for prompt in warmup_prompts.values():
             warmup_ids = torch.tensor([prompt["input_ids"]], dtype=torch.long, device="cuda:0")
             for _ in range(config["measurement"]["warmup_runs"]):
-                greedy_decode(model, warmup_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache())
+                greedy_decode(model, warmup_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache(warmup_ids.shape[-1]))
             del warmup_ids
         for prompt in prompts:
             current_prompt = prompt["prompt_id"]
@@ -124,7 +124,7 @@ def run_pilot(config, output):
             torch.cuda.empty_cache()
             input_ids = torch.tensor([prompt["input_ids"]], dtype=torch.long, device="cuda:0")
             phase = "inference"
-            result = greedy_decode(model, input_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache(), measure_cuda=True)
+            result = greedy_decode(model, input_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache(input_ids.shape[-1]), measure_cuda=True)
             del input_ids
             phase = "scoring"
             response = tokenizer.decode(result["output_ids"], skip_special_tokens=True)

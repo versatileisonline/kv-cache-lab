@@ -18,6 +18,7 @@ inference = [
     "huggingface-hub==0.24.7",
     "safetensors==0.4.5",
     "numpy==1.26.4",
+    "hqq==0.2.8.post1",
 ]
 
 [tool.setuptools.packages.find]

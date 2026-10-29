@@ -8,7 +8,7 @@ from pathlib import Path
 
 from kv_cache_lab.__main__ import main
 from kv_cache_lab.config import load_config, validate_config
-from kv_cache_lab.methods import validate_method
+from kv_cache_lab.methods import h2o_budget, validate_method
 from kv_cache_lab.prompts import cases, tokenized_case
 from kv_cache_lab.scoring import score_passkey
 
@@ -45,17 +45,21 @@ class PilotTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_config(config)
 
-    def test_planned_methods_validate_parameters_but_are_not_runnable_yet(self):
-        planned = (
-            {"name": "h2o", "params": {"budget_fraction": 0.25, "recent_fraction": 0.5}},
-            {"name": "kivi", "params": {"bits": 4, "group_size": 32, "residual_length": 128}},
-        )
-        for method in planned:
-            with self.assertRaisesRegex(ValueError, "not implemented"):
-                validate_method(method)
-        for method in ({"name": "h2o", "params": {"budget_fraction": 1.5, "recent_fraction": 0.5}}, {"name": "kivi", "params": {"bits": 3, "group_size": 32, "residual_length": 128}}):
+    def test_method_parameters_are_validated(self):
+        for method in ({"name": "h2o", "params": {"budget_fraction": 1.5, "recent_fraction": 0.5}}, {"name": "h2o", "params": {"budget_fraction": 0.25, "recent_fraction": 1}}, {"name": "kivi", "params": {"bits": 3, "group_size": 32, "residual_length": 128}}):
             with self.assertRaisesRegex(ValueError, "must be"):
                 validate_method(method)
+        with self.assertRaisesRegex(ValueError, "too small"):
+            h2o_budget({"budget_fraction": 0.0005, "recent_fraction": 0.5}, 2048)
+        self.assertEqual(h2o_budget({"budget_fraction": 0.125, "recent_fraction": 0.5}, 8192), (1024, 512))
+
+    def test_pilot_configs_share_prompts_across_methods(self):
+        configs = {path.stem: load_config(path) for path in sorted((ROOT / "configs/pilot").glob("*.json"))}
+        self.assertEqual(set(configs), {"fullkv", "h2o-b25", "h2o-b12", "kivi-4bit", "kivi-2bit"})
+        prompts = {name: list(cases(config)) for name, config in configs.items()}
+        self.assertTrue(all(cases_ == prompts["fullkv"] for cases_ in prompts.values()))
+        # The 2K pilot prompts are unchanged from the original FullKV pilot.
+        self.assertEqual(prompts["fullkv"][:10], list(cases(self.config)))
 
     def test_multiple_lengths_get_unique_codes_ids_and_exact_budgets(self):
         config = copy.deepcopy(self.config)
