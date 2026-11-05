@@ -4,9 +4,11 @@ import json
 import statistics
 from pathlib import Path
 
+from .scoring import leading_digits
+
 FIELDS = [
     "experiment_id", "method", "method_params", "split", "seed", "input_tokens", "run_status",
-    "prompts", "failures", "accuracy", "passkey_accuracy",
+    "prompts", "failures", "passkey_accuracy", "mean_leading_digits", "accuracy",
     "prefill_cache_bytes", "final_cache_bytes", "prefill_cache_vs_fullkv",
     "median_ttft_ms", "median_decode_tokens_per_second",
     "max_prefill_peak_allocated_bytes", "max_decode_peak_allocated_bytes",
@@ -54,6 +56,13 @@ def run_rows(run):
     metadata = json.loads((run / "metadata.json").read_text(encoding="utf-8")) if (run / "metadata.json").is_file() else {}
     with (run / "metrics.csv").open(newline="", encoding="utf-8") as stream:
         metrics = list(csv.DictReader(stream))
+    # Runs recorded before leading-digits-v1 lack the column; score their saved responses instead.
+    saved_digits = {}
+    if (run / "predictions.jsonl").is_file():
+        for line in (run / "predictions.jsonl").read_text(encoding="utf-8").splitlines():
+            prediction = json.loads(line) if line.strip() else {}
+            if prediction.get("status") == "completed":
+                saved_digits[prediction["prompt_id"]] = leading_digits(prediction["response"], prediction["expected_code"])
     common = {
         "experiment_id": config["experiment_id"], "method": config["method"]["name"],
         "method_params": json.dumps(config["method"]["params"], sort_keys=True),
@@ -73,6 +82,7 @@ def run_rows(run):
             **common, "input_tokens": length, "prompts": len(completed), "failures": failures,
             "accuracy": _mean(float(row["correct"] == "True") for row in completed),
             "passkey_accuracy": _mean(float(row["passkey_correct"] == "True") for row in completed),
+            "mean_leading_digits": _mean(_number(row.get("leading_digits")) if row.get("leading_digits") not in (None, "") else saved_digits.get(row["prompt_id"]) for row in completed),
             "prefill_cache_bytes": _mean(_number(row["prefill_cache_bytes"]) for row in completed),
             "final_cache_bytes": _mean(_number(row["final_cache_bytes"]) for row in completed),
             "median_ttft_ms": _median(_number(row["ttft_ms"]) for row in completed),

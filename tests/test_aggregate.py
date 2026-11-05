@@ -52,6 +52,14 @@ class AggregateTests(unittest.TestCase):
         with (self.root / "results.csv").open(newline="") as stream:
             self.assertEqual(len(list(csv.DictReader(stream))), 6)
 
+    def test_leading_digits_come_from_saved_responses_when_metrics_lack_them(self):
+        run = self.make_run("pilot-h2o-b25", {"name": "h2o", "params": {"budget_fraction": 0.25, "recent_fraction": 0.5}}, [self.row(2048, False, 100, 12), {**self.row(2048, False, 100, 14), "leading_digits": 5}])
+        rows = [{"prompt_id": "p-2048-12", "status": "completed", "response": "Answer: 85879124", "expected_code": "85822412"}]
+        (run / "predictions.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+        table = {row["input_tokens"]: row for row in aggregate([run], self.root / "results.csv")}
+        self.assertEqual(table[2048]["mean_leading_digits"], 4)
+        self.assertIsNone(table[4096]["mean_leading_digits"])
+
     def test_setup_failure_counts_against_every_length(self):
         self.make_run("pilot-kivi-4bit", {"name": "kivi", "params": {"bits": 4, "group_size": 32, "residual_length": 128}}, [{"prompt_id": None, "status": "failed", "failure_phase": "model_loading"}], status="failed")
         rows = aggregate([self.root / "runs" / "pilot-kivi-4bit"], self.root / "results.csv")

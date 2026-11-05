@@ -59,7 +59,7 @@ def eos_token_ids(model, tokenizer):
 def run_pilot(config, output):
     metadata = environment_metadata(config)
     write_json(output / "metadata.json", metadata)
-    summary = {"schema_version": 2, "mode": "gpu_pilot", "status": "running", "method": config["method"], "by_input_tokens": {}, "attempted": 0, "completed": 0, "correct": 0, "failures": 0, "performance_claims": False, "passkey_correct": 0, "passkey_accuracy": None, "scoring_rules": SCORING_RULES}
+    summary = {"schema_version": 2, "mode": "gpu_pilot", "status": "running", "method": config["method"], "by_input_tokens": {}, "attempted": 0, "completed": 0, "correct": 0, "failures": 0, "performance_claims": False, "passkey_correct": 0, "passkey_accuracy": None, "leading_digits": 0, "mean_leading_digits": None, "scoring_rules": SCORING_RULES}
     write_json(output / "summary.json", summary)
     phase = "environment"
     current_prompt = None
@@ -147,12 +147,15 @@ def run_pilot(config, output):
             summary["passkey_correct"] += int(score["passkey_correct"])
             summary["accuracy"] = summary["correct"] / summary["completed"]
             summary["passkey_accuracy"] = summary["passkey_correct"] / summary["completed"]
-            group = summary["by_input_tokens"].setdefault(str(prompt["input_tokens"]), {"completed": 0, "correct": 0, "passkey_correct": 0})
+            summary["leading_digits"] += score["leading_digits"]
+            summary["mean_leading_digits"] = summary["leading_digits"] / summary["completed"]
+            group = summary["by_input_tokens"].setdefault(str(prompt["input_tokens"]), {"completed": 0, "correct": 0, "passkey_correct": 0, "leading_digits": 0})
             group["completed"] += 1
             group["correct"] += int(score["correct"])
             group["passkey_correct"] += int(score["passkey_correct"])
+            group["leading_digits"] += score["leading_digits"]
             write_json(output / "summary.json", summary)
-            print(f"{current_prompt}: strict_correct={score['correct']}, passkey_correct={score['passkey_correct']}, input_tokens={prompt['input_tokens']}", flush=True)
+            print(f"{current_prompt}: strict_correct={score['correct']}, passkey_correct={score['passkey_correct']}, leading_digits={score['leading_digits']}, input_tokens={prompt['input_tokens']}", flush=True)
         summary["status"] = "completed"
         return summary
     except Exception as error:

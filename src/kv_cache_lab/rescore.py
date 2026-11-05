@@ -60,6 +60,7 @@ def rescore_predictions(predictions, output):
         "accuracy": strict_correct / len(completed) if completed else None,
         "passkey_correct": passkey_correct,
         "passkey_accuracy": passkey_correct / len(completed) if completed else None,
+        "mean_leading_digits": sum(row["leading_digits"] for row in completed) / len(completed) if completed else None,
         "strict_score_mismatches": sum(row.get("strict_score_matches_recorded") is False for row in completed),
     }
     create_run_directory(destination)

@@ -57,4 +57,15 @@ class ScoringTests(unittest.TestCase):
                 score_passkey("12345678", expected)
         with self.assertRaises(ValueError):
             score_passkey(None, "12345678")
-        self.assertEqual(SCORING_RULES, {"strict": "strict-v1", "passkey": "single-final-period-v1"})
+        self.assertEqual(SCORING_RULES, {"strict": "strict-v1", "passkey": "single-final-period-v1", "leading_digits": "leading-digits-v1"})
+
+    def test_leading_digits_give_partial_credit_for_the_start_of_the_code(self):
+        cases = {
+            "00123456": 8, "Answer: 00123456.": 8, "Answer: 00129999": 4, "00123456 extra 00123456": 8,
+            "10123456": 0, "No code found.": 0, "": 0, "001": 3, "0012345678": 8, "The code is 0012 and 3456": 4,
+        }
+        for response, expected in cases.items():
+            with self.subTest(response=response):
+                self.assertEqual(score_passkey(response, "00123456")["leading_digits"], expected)
+        # Real H2O pilot answer: only the first three-digit token survived eviction.
+        self.assertEqual(score_passkey("Answer: 85879124", "85822412")["leading_digits"], 3)

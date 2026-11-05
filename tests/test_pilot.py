@@ -61,6 +61,17 @@ class PilotTests(unittest.TestCase):
         # The 2K pilot prompts are unchanged from the original FullKV pilot.
         self.assertEqual(prompts["fullkv"][:10], list(cases(self.config)))
 
+    def test_h2o_follow_up_pilot_reuses_the_pilot_prompts(self):
+        pilot = list(cases(load_config(ROOT / "configs/pilot/fullkv.json")))
+        configs = {path.stem: load_config(path) for path in sorted((ROOT / "configs/pilot-h2o").glob("*.json"))}
+        self.assertEqual(set(configs), {"h2o-b50", "h2o-b25-r10", "h2o-b12-r10"})
+        for name, config in configs.items():
+            self.assertEqual(config["experiment_id"], f"pilot-{name}")
+            self.assertEqual(config["method"]["name"], "h2o")
+            self.assertEqual(list(cases(config)), pilot)
+            for length in config["dataset"]["input_tokens"]:
+                h2o_budget(config["method"]["params"], length)
+
     def test_final_configs_match_pilot_methods_with_fresh_prompts(self):
         pilot = {path.name: load_config(path) for path in (ROOT / "configs/pilot").glob("*.json")}
         final = {path.name: load_config(path) for path in (ROOT / "configs/final").glob("*.json")}

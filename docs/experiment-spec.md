@@ -50,7 +50,9 @@ PyramidKV is an optional later comparison. The Week 8–10 hybrid (H2O eviction 
 
 Passkey scores use the entire response. `strict-v1` accepts either the eight-digit code or `Answer: <code>`, with whitespace allowed around the optional prefix/code. `single-final-period-v1` also permits one period immediately after the code. Both reject explanations, multiple codes, other punctuation, Unicode digits, and incorrect digits. Leading zeroes are significant, and the prefix is case-sensitive.
 
-`correct` and `accuracy` use `strict-v1`. `passkey_correct` and `passkey_accuracy` use `single-final-period-v1`. Record `scoring_rules` with each run. Keep incorrect predictions and runtime failures. Changing a scoring rule creates a new named version; it doesn't replace an earlier run's score. Freeze the rules before evaluating the final split.
+`correct` and `accuracy` use `strict-v1`. `passkey_correct` and `passkey_accuracy` use `single-final-period-v1`. `leading_digits` (`leading-digits-v1`) is partial credit: how many of the code's first digits the first run of ASCII digits in the response gets right, 0–8. It is reported as `mean_leading_digits` and can be computed from saved responses, so runs recorded before it existed are scored the same way. Record `scoring_rules` with each run.
+
+**Headline metric: `passkey_accuracy`.** The pilot showed that strict scoring mostly measures whether the model adds a final period: FullKV found every code but scored 0.4 strict at 2K. Strict accuracy stays in every table as a secondary column, and `mean_leading_digits` separates methods that score zero (see [pilot results](pilot-results.md)). Keep incorrect predictions and runtime failures. Changing a scoring rule creates a new named version; it doesn't replace an earlier run's score. Freeze the rules before evaluating the final split.
 
 ## Pilot gate
 
@@ -59,6 +61,8 @@ Validate FullKV and each method on the 10 pilot cases before freezing the final 
 - FullKV inaccurate: fix the setup before going further.
 - Every method nearly perfect: make the pilot harder (longer inputs, smaller budgets, or decoy codes) and record the change here.
 - Checks pass: freeze the 180 final prompts and the provisional parameters.
+
+**Pilot status (array job 8288864, A100-SXM4-80GB):** FullKV passes (passkey accuracy 1.0 at 2K/4K/8K). KIVI works (4-bit 1.0 everywhere; 2-bit 0.7–0.9). H2O at both budgets scores 0–0.1 and keeps only the first three-digit token of the code, so `configs/pilot-h2o/` tests a 50% budget and a 10% recent window (25% and 12.5% budgets) before H2O parameters are frozen. Details: [pilot results](pilot-results.md).
 
 The draft final configurations are in `configs/final/` (seed 1000, 60 prompts per length, 20 per length and position; no seed or passkey overlaps the pilot). `scripts/submit_set.sh` refuses to submit them until the gate passes. To freeze: apply any parameter changes from the gate to `configs/final/`, record them here, then commit an empty `configs/final/FROZEN` file together with them. After that, the final configurations must not change.
 

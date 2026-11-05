@@ -41,6 +41,7 @@ class RescoreTests(unittest.TestCase):
         self.assertEqual(result["passkey_correct"], 2)
         self.assertAlmostEqual(result["accuracy"], 1 / 3)
         self.assertAlmostEqual(result["passkey_accuracy"], 2 / 3)
+        self.assertAlmostEqual(result["mean_leading_digits"], 16 / 3)
         self.assertEqual(result["completed"], 3)
         self.assertEqual(result["failures"], 1)
         self.assertEqual(result["strict_score_mismatches"], 0)
