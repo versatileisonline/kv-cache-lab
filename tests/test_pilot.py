@@ -73,7 +73,7 @@ class PilotTests(unittest.TestCase):
                 h2o_budget(config["method"]["params"], length)
 
     def test_final_configs_match_pilot_methods_with_fresh_prompts(self):
-        pilot = {path.name: load_config(path) for path in (ROOT / "configs/pilot").glob("*.json")}
+        pilot = {path.name: load_config(path) for folder in ("pilot", "pilot-h2o") for path in (ROOT / "configs" / folder).glob("*.json")}
         final = {path.name: load_config(path) for path in (ROOT / "configs/final").glob("*.json")}
         self.assertEqual(set(final), set(pilot))
         final_cases = list(cases(final["fullkv.json"]))

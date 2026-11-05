@@ -106,6 +106,16 @@ uv run --locked --extra inference python -m kv_cache_lab aggregate \
 
 The CSV has one row per method and input length: accuracy, cache bytes and their ratio to FullKV, peak memory, and median timings (diagnostic only). `squeue -u "$USER"` lists queued (`PD`) and running (`R`) tasks, and `sacct -j <jobid>` shows their final states. `configs/final/` is refused until the pilot gate passes ([experiment spec](experiment-spec.md#pilot-gate)).
 
+## Run every official set
+
+After the pilot gate, one command submits everything that remains: the final passkey split (8 methods × 180 prompts), Qasper (8 methods × 50 questions), and the speed run (5 methods, 2K–32K). It first downloads the pinned Qasper data on the login node, because compute nodes may not reach the internet:
+
+```bash
+bash scripts/submit_all.sh
+```
+
+It submits three array jobs, 21 GPU tasks in all, and prints a `Table:` command for each. Your QOS may limit how many run at once; the rest wait in the queue. When none are left in `squeue`, run the three `Table:` commands to get one CSV per set.
+
 Review predictions, accuracy, cache reuse, memory, and the recorded environment in the run directory. Compare only runs with matching source/configuration and compatible hardware. Short-answer timing is diagnostic.
 
 Scratch is temporary and differs between clusters. Copy results you need into private permanent storage before cleanup. Keep run metadata and usage records local unless intentionally reviewed for publication. [VT storage guidance](https://www.docs.arc.vt.edu/resources/storage.html)

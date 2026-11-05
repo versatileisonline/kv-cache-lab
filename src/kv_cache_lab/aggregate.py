@@ -1,14 +1,15 @@
-"""Combine run directories into one CSV row per experiment and input length."""
+"""Combine run directories into one CSV row per experiment and input length (Qasper: its length cap)."""
 import csv
 import json
 import statistics
 from pathlib import Path
 
+from .config import length_groups
 from .scoring import leading_digits
 
 FIELDS = [
-    "experiment_id", "method", "method_params", "split", "seed", "input_tokens", "run_status",
-    "prompts", "failures", "passkey_accuracy", "mean_leading_digits", "accuracy",
+    "experiment_id", "task", "method", "method_params", "split", "seed", "input_tokens", "run_status",
+    "prompts", "failures", "passkey_accuracy", "mean_leading_digits", "accuracy", "mean_f1",
     "prefill_cache_bytes", "final_cache_bytes", "prefill_cache_vs_fullkv",
     "median_ttft_ms", "median_decode_tokens_per_second",
     "max_prefill_peak_allocated_bytes", "max_decode_peak_allocated_bytes",
@@ -33,6 +34,10 @@ def find_runs(paths):
 
 def _number(value):
     return float(value) if value not in (None, "") else None
+
+
+def _flag(value):
+    return None if value in (None, "") else float(value == "True")
 
 
 def _mean(values):
@@ -61,10 +66,10 @@ def run_rows(run):
     if (run / "predictions.jsonl").is_file():
         for line in (run / "predictions.jsonl").read_text(encoding="utf-8").splitlines():
             prediction = json.loads(line) if line.strip() else {}
-            if prediction.get("status") == "completed":
+            if prediction.get("status") == "completed" and "expected_code" in prediction:
                 saved_digits[prediction["prompt_id"]] = leading_digits(prediction["response"], prediction["expected_code"])
     common = {
-        "experiment_id": config["experiment_id"], "method": config["method"]["name"],
+        "experiment_id": config["experiment_id"], "task": config["dataset"]["task"], "method": config["method"]["name"],
         "method_params": json.dumps(config["method"]["params"], sort_keys=True),
         "split": config["dataset"]["split"], "seed": config["seed"],
         "run_status": summary.get("status"),
@@ -72,16 +77,18 @@ def run_rows(run):
         "run_directory": str(run),
     }
     rows = []
-    for length in config["dataset"]["input_tokens"]:
-        group = [row for row in metrics if row.get("input_tokens") == str(length)]
+    for length in length_groups(config):
+        # Runs recorded before length_group existed group by exact input length.
+        group = [row for row in metrics if (row.get("length_group") or row.get("input_tokens")) == str(length)]
         completed = [row for row in group if row["status"] == "completed"]
         failures = sum(row["status"] == "failed" for row in group)
         # A failure before any prompt (setup, model loading) has no input length; charge it to every length.
         failures += sum(row["status"] == "failed" and not row.get("input_tokens") for row in metrics)
         rows.append({
             **common, "input_tokens": length, "prompts": len(completed), "failures": failures,
-            "accuracy": _mean(float(row["correct"] == "True") for row in completed),
-            "passkey_accuracy": _mean(float(row["passkey_correct"] == "True") for row in completed),
+            "accuracy": _mean(_flag(row.get("correct")) for row in completed),
+            "passkey_accuracy": _mean(_flag(row.get("passkey_correct")) for row in completed),
+            "mean_f1": _mean(_number(row.get("f1")) for row in completed),
             "mean_leading_digits": _mean(_number(row.get("leading_digits")) if row.get("leading_digits") not in (None, "") else saved_digits.get(row["prompt_id"]) for row in completed),
             "prefill_cache_bytes": _mean(_number(row["prefill_cache_bytes"]) for row in completed),
             "final_cache_bytes": _mean(_number(row["final_cache_bytes"]) for row in completed),

@@ -37,18 +37,36 @@ def validate_config(config):
     require(isinstance(model.get("revision"), str) and re.fullmatch(r"[0-9a-f]{40}", model["revision"]), "Pin model.revision to a full commit SHA.")
     require(model.get("dtype") == "float16", "Weights stay FP16.")
     require(model.get("attention_backend") == "sdpa", "The harness uses SDPA.")
-    require(dataset.get("task") == "passkey", "Only the passkey task is implemented.")
-    require(dataset.get("split") in ("pilot", "final"), "dataset.split must be pilot or final.")
-    require(integer(dataset.get("num_examples")) and dataset["num_examples"] <= 1000, "num_examples (per input length) must be between 1 and 1000.")
-    lengths = dataset.get("input_tokens")
-    require(isinstance(lengths, list) and bool(lengths) and all(integer(n, 256) for n in lengths), "dataset.input_tokens must be a nonempty list of integers >= 256.")
-    require(len(set(lengths)) == len(lengths), "dataset.input_tokens must not repeat.")
-    positions = dataset.get("positions")
-    require(isinstance(positions, list) and bool(positions), "dataset.positions must be a nonempty list.")
-    require(all(type(p) in (int, float) and 0 < p < 1 for p in positions), "Positions must be numeric fractions strictly between 0 and 1.")
+    task = dataset.get("task")
+    require(task in ("passkey", "qasper"), "dataset.task must be passkey or qasper.")
+    require(dataset.get("split") in ("pilot", "final", "speed"), "dataset.split must be pilot, final, or speed.")
     require(isinstance(dataset.get("template_date"), str) and bool(dataset["template_date"]), "Fix template_date to keep the chat template reproducible.")
+    if task == "passkey":
+        require(integer(dataset.get("num_examples")) and dataset["num_examples"] <= 1000, "num_examples (per input length) must be between 1 and 1000.")
+        lengths = dataset.get("input_tokens")
+        require(isinstance(lengths, list) and bool(lengths) and all(integer(n, 256) for n in lengths), "dataset.input_tokens must be a nonempty list of integers >= 256.")
+        require(len(set(lengths)) == len(lengths), "dataset.input_tokens must not repeat.")
+        positions = dataset.get("positions")
+        require(isinstance(positions, list) and bool(positions), "dataset.positions must be a nonempty list.")
+        require(all(type(p) in (int, float) and 0 < p < 1 for p in positions), "Positions must be numeric fractions strictly between 0 and 1.")
+    else:
+        require(dataset.get("split") == "final", "Qasper runs use the final split.")
+        require(integer(dataset.get("num_examples")) and dataset["num_examples"] <= 200, "Qasper num_examples must be between 1 and 200.")
+        require(integer(dataset.get("max_input_tokens"), 1024) and dataset["max_input_tokens"] <= 32768, "dataset.max_input_tokens must be between 1024 and 32768.")
+        require("input_tokens" not in dataset and "positions" not in dataset, "Qasper uses max_input_tokens, not input_tokens or positions.")
     require(integer(generation.get("max_new_tokens")) and generation["max_new_tokens"] <= 256, "max_new_tokens must be between 1 and 256.")
     require(generation.get("batch_size") == 1 and type(generation["batch_size"]) is int, "Only batch size 1 is implemented.")
     require(generation.get("do_sample") is False, "Use greedy decoding: do_sample=false.")
+    require(generation.get("ignore_eos", False) in (True, False), "generation.ignore_eos must be true or false.")
     require(integer(measurement.get("warmup_runs"), 0), "warmup_runs must be a nonnegative integer.")
-    require(measurement.get("performance_claims") is False, "Quality-run timings cannot be marked as performance claims.")
+    # Speed runs force a fixed output length; only they may support timing claims.
+    speed = dataset["split"] == "speed"
+    require(speed == (generation.get("ignore_eos") is True), "Speed runs (split speed) and only speed runs set generation.ignore_eos.")
+    require(not speed or task == "passkey", "Speed runs use passkey-style filler prompts.")
+    require(measurement.get("performance_claims") is speed, "performance_claims is true for speed runs and false for quality runs.")
+
+
+def length_groups(config):
+    """The input lengths results are grouped by: exact passkey lengths, or Qasper's single cap."""
+    dataset = config["dataset"]
+    return dataset["input_tokens"] if dataset["task"] == "passkey" else [dataset["max_input_tokens"]]

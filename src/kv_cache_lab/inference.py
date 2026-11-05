@@ -71,7 +71,10 @@ def greedy_decode(model, input_ids, max_new_tokens, eos_ids, *, cache=None, meas
             "cache_position": torch.tensor([position], device=device),
         }
         try:
-            return model(input_ids=tokens, attention_mask=mask, past_key_values=cache, use_cache=True, return_dict=True, **positions)
+            # Project only the last position to vocabulary logits. Full-prompt logits (FP32 in Transformers 4.44)
+            # would add ~6 GiB at 8K and ~25 GiB at 32K to every method's peak memory.
+            outputs = model.get_decoder()(input_ids=tokens, attention_mask=mask, past_key_values=cache, use_cache=True, return_dict=True, **positions)
+            return outputs.past_key_values, model.get_output_embeddings()(outputs.last_hidden_state[:, -1, :])
         except Exception as error:
             error.kv_phase = phase
             raise
@@ -81,15 +84,14 @@ def greedy_decode(model, input_ids, max_new_tokens, eos_ids, *, cache=None, meas
         if measure_cuda:
             torch.cuda.reset_peak_memory_stats(device)
         start = time.perf_counter()
-        outputs = forward("prefill", input_ids)
-        cache = outputs.past_key_values
-        token = outputs.logits[:, -1, :].argmax(dim=-1, keepdim=True)
+        cache, logits = forward("prefill", input_ids)
+        token = logits.argmax(dim=-1, keepdim=True)
         sync()
         prefill_seconds = time.perf_counter() - start
         if measure_cuda:
             diagnostics["ttft_ms"] = prefill_seconds * 1000
             diagnostics["prefill_peak"] = peaks()
-        del outputs
+        del logits
         prefill_cache = cache_stats(cache)
         generated.append(token)
         first_is_eos = token.item() in eos_ids
@@ -100,10 +102,9 @@ def greedy_decode(model, input_ids, max_new_tokens, eos_ids, *, cache=None, meas
         if not first_is_eos:
             for step in range(max_new_tokens - 1):
                 mask = torch.cat((mask, mask.new_ones((1, 1))), dim=-1)
-                outputs = forward("decode", token, input_ids.shape[-1] + step)
-                cache = outputs.past_key_values
-                token = outputs.logits[:, -1, :].argmax(dim=-1, keepdim=True)
-                del outputs
+                cache, logits = forward("decode", token, input_ids.shape[-1] + step)
+                token = logits.argmax(dim=-1, keepdim=True)
+                del logits
                 generated.append(token)
                 if token.item() in eos_ids:
                     break

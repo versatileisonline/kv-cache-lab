@@ -28,13 +28,14 @@ All official measurements run on **one NVIDIA A100 on Virginia Tech ARC (TinkerC
 | Config name | Method | Parameters |
 | --- | --- | --- |
 | `fullkv` | Complete FP16 cache (baseline) | none |
-| `h2o` | Keep recent and high-attention prompt positions per layer | `budget_fraction` 0.25 and 0.125 of the input length (512 and 256 positions at 2K, 1,024 and 512 at 4K, 2,048 and 1,024 at 8K); `recent_fraction` 0.5 of the budget (*provisional*) |
-| `kivi` | KIVI-style quantized K/V | `bits` 4, then 2 after 4-bit validation; `group_size` 32 and `residual_length` 128 full-precision recent tokens (*provisional*) |
+| `h2o` | Keep recent and high-attention prompt positions per layer | Six settings, all reported: `budget_fraction` 0.5, 0.25 and 0.125 of the input length with `recent_fraction` 0.5 of the budget, plus 0.25 and 0.125 with `recent_fraction` 0.1 |
+| `kivi` | KIVI-style quantized K/V | `bits` 4 and 2; `group_size` 32 and `residual_length` 128 full-precision recent tokens |
 
 PyramidKV is an optional later comparison. The Week 8–10 hybrid (H2O eviction plus quantizing the retained states is the leading candidate) is specified once its components pass the pilot gate. Implementation notes, recorded so results are read correctly:
 
 - **H2O** uses the SDPA H2O attention from the pinned [KVCache-Factory](../configs/upstream.json) commit, patched onto this model's attention layers only. The cache is stored per KV head (8 heads, `kv_cache_granularity=kv_head`), with scores averaged over each head's 3 query heads, so cache bytes compare directly with FullKV. Eviction happens once, at the end of prefill: the prompt keeps `budget` positions per layer (the most recent `budget × recent_fraction` plus the highest-scoring rest), and generated tokens are added without further eviction. Prefill attention itself uses the full prompt. Scoring builds the full prompt-length attention matrix, a large temporary allocation that may not fit at 16K–32K on a 40 GB A100.
 - **KIVI** uses the Transformers 4.44 `HQQQuantizedCache` with keys quantized per channel (HQQ `axis=0`) and values per token (`axis=1`). KVCache-Factory's `kivi` setting uses the reverse axes (key 1, value 0), which puts keys per token, so we don't copy it. Differences from the KIVI paper: each key group shares one channel but its 32 elements are strided across tokens (and, for long prompts, heads) instead of 32 consecutive tokens; HQQ fits scales and zero-points by optimization instead of plain min/max; and the whole prompt is quantized at prefill. Only tokens generated afterwards stay in full precision, until `residual_length` of them accumulate. The cache is dequantized on every decode step, so KIVI saves resident cache memory but not decode time. Reported cache bytes include the packed values plus scales and zero-points.
+- Every forward pass projects only the last position to vocabulary logits. Transformers 4.44 computes FP32 logits for every prompt position, which added about 6 GiB to every method's prefill peak at 8K in the pilot and would add about 25 GiB at 32K. The pilot ran before this change, so its peak-memory figures are higher than the final ones and are not comparable to them. Generated tokens are unchanged.
 - Pilot configurations for every method are in `configs/pilot/`. They share the seed and lengths, so all methods see identical prompts. Their 2K prompts are the same ones as `configs/fullkv-pilot.json`.
 
 ## Workloads
@@ -44,7 +45,7 @@ PyramidKV is an optional later comparison. The Week 8–10 hybrid (H2O eviction 
 - *Pilot split:* seed 42, 10 examples (2,048 tokens; extended to 4K/8K before the gate if needed).
 - *Final split:* 180 fresh examples = 3 lengths × 3 positions × 20, using a seed never used for the pilot. The same 180 prompts are run for every method. The final split is frozen only after the pilot gate passes.
 
-**Qasper.** 50 follow-up cases from the LongBench Qasper subset, truncated to at most 8,192 input tokens, up to 128 new tokens, scored with token-level F1. These are in addition to the 180 passkey prompts. (*Not yet implemented.*)
+**Qasper.** 50 questions sampled with seed 3000 from LongBench's Qasper subset (pinned `zai-org/LongBench` revision and archive SHA-256 in `qasper.py`; `python -m kv_cache_lab fetch-data` downloads it). The prompt is LongBench's Qasper prompt inside the chat template. Articles longer than the 8,192-token cap are cut from the middle, keeping the first and last halves, as LongBench does. Up to 128 new tokens. Scored with LongBench's token F1 (`longbench-qa-f1-v1`: lowercase, strip punctuation and articles, best match over the reference answers), reported as `mean_f1`. Configurations: `configs/qasper/`, the same eight methods as the final passkey split.
 
 ## Scoring
 
@@ -56,15 +57,15 @@ Passkey scores use the entire response. `strict-v1` accepts either the eight-dig
 
 ## Pilot gate
 
-Validate FullKV and each method on the 10 pilot cases before freezing the final split:
+Validate FullKV and each method on the 10 pilot cases before freezing the final split. This gate passed on 2026-11-05:
 
 - FullKV inaccurate: fix the setup before going further.
 - Every method nearly perfect: make the pilot harder (longer inputs, smaller budgets, or decoy codes) and record the change here.
 - Checks pass: freeze the 180 final prompts and the provisional parameters.
 
-**Pilot status (array job 8288864, A100-SXM4-80GB):** FullKV passes (passkey accuracy 1.0 at 2K/4K/8K). KIVI works (4-bit 1.0 everywhere; 2-bit 0.7–0.9). H2O at both budgets scores 0–0.1 and keeps only the first three-digit token of the code, so `configs/pilot-h2o/` tests a 50% budget and a 10% recent window (25% and 12.5% budgets) before H2O parameters are frozen. Details: [pilot results](pilot-results.md).
+**Pilot status (array job 8288864, A100-SXM4-80GB):** FullKV passes (passkey accuracy 1.0 at 2K/4K/8K). KIVI works (4-bit 1.0 everywhere; 2-bit 0.7–0.9). H2O at both budgets scores 0–0.1 and keeps only the first three-digit token of the code, Rather than wait for a second pilot, the final split runs all six H2O settings (the two piloted ones, a 50% budget, and a 10% recent window at 25% and 12.5%) and reports every one, so no H2O setting is chosen after seeing final results. `configs/pilot-h2o/` remains an optional check on the pilot prompts. Details: [pilot results](pilot-results.md).
 
-The draft final configurations are in `configs/final/` (seed 1000, 60 prompts per length, 20 per length and position; no seed or passkey overlaps the pilot). `scripts/submit_set.sh` refuses to submit them until the gate passes. To freeze: apply any parameter changes from the gate to `configs/final/`, record them here, then commit an empty `configs/final/FROZEN` file together with them. After that, the final configurations must not change.
+**Frozen.** The final configurations are in `configs/final/` (eight methods; seed 1000, 60 prompts per length, 20 per length and position; no seed or passkey overlaps the pilot) and `configs/qasper/`. Both folders contain a `FROZEN` file, without which `scripts/submit_set.sh` refuses final-split configurations. Scoring rules and parameters must not change from here on; any later change is a new, separately named experiment.
 
 ## Metrics and boundaries
 
@@ -72,7 +73,7 @@ Quality runs save exact-match correctness, input/output counts, output text, and
 
 CUDA synchronization surrounds each timed phase. TTFT starts with input already on the GPU and ends after the first greedy token is selected. Decode timing covers later forward passes and token selection. Loading, downloads, tokenization, cache inspection, scoring, and file writing are outside these intervals. Memory peaks reset at phase boundaries.
 
-Passkey answers are only a few tokens long, so their timings are diagnostic. Speed claims come from a separate **speed run** (*not yet implemented*): 256 forced new tokens (EOS ignored), 2,048 to 32,768 input tokens, 2 warmups, 5 repeats, and the median reported. Quality runs stay at 2K–8K. Speed and memory runs add 16K and 32K, where cache savings dominate.
+Passkey answers are only a few tokens long, so their timings are diagnostic. Speed claims come from a separate **speed run** (`configs/speed/`, split `speed`, seed 2000): 256 forced new tokens (EOS ignored), inputs of 2K, 4K, 8K, 16K and 32K tokens, 2 warmups per length, 5 prompts per length, and the median reported. It covers FullKV, H2O 25% and 12.5%, and KIVI 4- and 2-bit; the eviction budget barely changes H2O's speed. Only speed configurations may set `performance_claims`. Quality runs stay at 2K–8K. If a method runs out of GPU memory at one length (expected for H2O's scoring matrix at 32K, which alone would be about 48 GiB), that length's prompts are recorded as `OutOfMemoryError` failures and the remaining lengths still run. Running out of memory is a reportable result.
 
 ## Reproducibility and output
 

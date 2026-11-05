@@ -72,10 +72,12 @@ The follow-up pilot, `configs/pilot-h2o/` (same prompts), tests whether any H2O 
 
 Scoring also gained `leading-digits-v1`, the number of correct leading digits (0–8). It shows how much of the code each H2O setting keeps instead of a flat zero. The aggregate command computes it from saved answers, so the pilot above gets it without rerunning.
 
-## Next steps
+## Decision and next steps
 
-1. Submit `configs/pilot-h2o/`, then aggregate it together with job 8288864.
-2. Pick the H2O settings for the final split, using the follow-up results. If none works, keep 25% and 12.5% and report the failure.
-3. Copy the chosen settings into `configs/final/`, record them in the spec, and commit `configs/final/FROZEN`.
-4. Run the final split: 180 prompts per method, the same prompts for every method.
-5. Build the remaining pieces: the speed run (2K–32K, 256 forced tokens), the Qasper task with F1, and the charts and tables for the report.
+The gate is passed and the final sets are frozen. Instead of choosing an H2O setting from a second pilot, the final split runs all six H2O settings and reports every one.
+
+1. Submit everything with `bash scripts/submit_all.sh`: the final passkey split, Qasper, and the speed run (see [ARC guide](arc.md#run-every-official-set)).
+2. Aggregate each set into its own CSV.
+3. Make the charts and tables for the report from those CSVs.
+
+Peak-memory figures in this pilot include about 6 GiB of full-prompt logits at 8K. The runner now computes logits only for the last position, so the final runs report lower, cleaner peaks. Compare final runs with each other, not with the pilot.

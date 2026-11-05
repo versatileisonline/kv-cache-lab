@@ -1,4 +1,4 @@
-"""Passkey quality pilot for one KV-cache method. CUDA failures are recorded, never replaced by CPU runs."""
+"""One KV-cache method on one task (passkey quality, Qasper, or speed). CUDA failures are recorded, never replaced by CPU runs."""
 import gc
 import importlib.metadata
 import os
@@ -13,6 +13,7 @@ from .artifacts import append_jsonl, append_metrics, file_hash, write_json
 from .inference import greedy_decode
 from .methods import METHODS, cache_factory
 from .prompts import cases, tokenized_case
+from .config import length_groups
 from .scoring import SCORING_RULES, score_passkey
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +28,7 @@ def command_output(args):
 
 def environment_metadata(config):
     return {
-        "schema_version": 2, "mode": "gpu_pilot", "config": config,
+        "schema_version": 3, "config": config,
         "scoring_rules": SCORING_RULES,
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "python": sys.version, "hostname": platform.node(), "system": platform.platform(),
@@ -41,7 +42,7 @@ def environment_metadata(config):
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "gpu_inventory_before": command_output(["nvidia-smi", "--query-gpu=name,uuid,memory.total,driver_version", "--format=csv,noheader"]),
         "gpu_processes_before": command_output(["nvidia-smi", "--query-compute-apps=gpu_uuid,pid,used_memory", "--format=csv,noheader"]),
-        "measurement_note": "Single-pass pilot diagnostics; not the fixed-length performance campaign.",
+        "measurement_note": "Speed run: fixed output length, EOS ignored, median over repeated prompts." if config["dataset"]["split"] == "speed" else "Quality run: timings are diagnostic only.",
     }
 
 
@@ -56,10 +57,46 @@ def eos_token_ids(model, tokenizer):
     return sorted(set(values))
 
 
+# Score totals and the summary mean computed from each.
+MEANS = {"correct": "accuracy", "passkey_correct": "passkey_accuracy", "leading_digits": "mean_leading_digits", "f1": "mean_f1"}
+
+
+def build_prompts(config, tokenizer):
+    if config["dataset"]["task"] == "qasper":
+        from . import qasper
+        rows = qasper.load_rows(qasper.fetch_data())
+        return [qasper.tokenized_case(case, config, tokenizer) for case in qasper.select_cases(rows, config)]
+    return [{**tokenized_case(case, config, tokenizer), "length_group": case["target_input_tokens"]} for case in cases(config)]
+
+
+def score_response(config, prompt, response):
+    """Returns the scores and the reference fields saved next to the response."""
+    if config["dataset"]["task"] == "qasper":
+        from .qasper import score_qasper
+        return score_qasper(response, prompt["answers"]), {"answers": prompt["answers"], "source_id": prompt["source_id"]}
+    return score_passkey(response, prompt["expected_code"]), {"expected_code": prompt["expected_code"]}
+
+
+def tally(target, score):
+    target["completed"] += 1
+    for key in MEANS:
+        if key in score:
+            target[key] = target.get(key, 0) + score[key]
+
+
 def run_pilot(config, output):
     metadata = environment_metadata(config)
     write_json(output / "metadata.json", metadata)
-    summary = {"schema_version": 2, "mode": "gpu_pilot", "status": "running", "method": config["method"], "by_input_tokens": {}, "attempted": 0, "completed": 0, "correct": 0, "failures": 0, "performance_claims": False, "passkey_correct": 0, "passkey_accuracy": None, "leading_digits": 0, "mean_leading_digits": None, "scoring_rules": SCORING_RULES}
+    task = config["dataset"]["task"]
+    scores = ("f1",) if task == "qasper" else ("correct", "passkey_correct", "leading_digits")
+    summary = {
+        "schema_version": 3, "mode": "gpu_speed" if config["dataset"]["split"] == "speed" else "gpu_quality",
+        "task": task, "status": "running", "method": config["method"], "by_input_tokens": {},
+        "attempted": 0, "completed": 0, "failures": 0,
+        "performance_claims": config["measurement"]["performance_claims"],
+        **{key: 0 for key in scores}, **{MEANS[key]: None for key in scores},
+        "scoring_rules": {"qa_f1": "longbench-qa-f1-v1"} if task == "qasper" else SCORING_RULES,
+    }
     write_json(output / "summary.json", summary)
     phase = "environment"
     current_prompt = None
@@ -99,63 +136,85 @@ def run_pilot(config, output):
         ).to("cuda:0").eval()
         if any(parameter.device != torch.device("cuda:0") or parameter.dtype != torch.float16 for parameter in model.parameters()):
             raise RuntimeError("All model parameters must remain FP16 on cuda:0.")
-        if max(config["dataset"]["input_tokens"]) + config["generation"]["max_new_tokens"] > model.config.max_position_embeddings:
+        if max(length_groups(config)) + config["generation"]["max_new_tokens"] > model.config.max_position_embeddings:
             raise ValueError("Input plus output exceeds the model context limit.")
-        stop_ids = eos_token_ids(model, tokenizer)
+        # Speed runs ignore EOS so every request generates exactly max_new_tokens.
+        stop_ids = [] if config["generation"].get("ignore_eos") else eos_token_ids(model, tokenizer)
         new_cache = cache_factory(config["method"], model)
         metadata.update({"resolved_model_revision": getattr(model.config, "_commit_hash", None), "eos_token_ids": stop_ids})
         write_json(output / "metadata.json", metadata)
         phase = "prompt_construction"
-        prompts = [tokenized_case(case, config, tokenizer) for case in cases(config)]
+        prompts = build_prompts(config, tokenizer)
         for prompt in prompts:
             append_jsonl(output / "prompts.jsonl", prompt)
-        phase = "warmup"
-        warmup_prompts = {prompt["target_input_tokens"]: prompt for prompt in reversed(prompts)}
-        for prompt in warmup_prompts.values():
-            warmup_ids = torch.tensor([prompt["input_ids"]], dtype=torch.long, device="cuda:0")
-            for _ in range(config["measurement"]["warmup_runs"]):
-                greedy_decode(model, warmup_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache(warmup_ids.shape[-1]))
-            del warmup_ids
+        groups = {}
         for prompt in prompts:
-            current_prompt = prompt["prompt_id"]
-            summary["attempted"] += 1
-            phase = "input_transfer"
+            groups.setdefault(prompt["length_group"], []).append(prompt)
+
+        def record_failure(prompt, failure_phase, error):
+            # Running out of GPU memory at one length is a result (e.g. H2O scoring at 32K); later lengths still run.
+            failure = {"prompt_id": prompt["prompt_id"], "status": "failed", "failure_phase": failure_phase, "error_type": type(error).__name__, "input_tokens": prompt["input_tokens"], "length_group": prompt["length_group"]}
+            append_jsonl(output / "predictions.jsonl", failure)
+            append_metrics(output / "metrics.csv", failure)
+            summary["failures"] += 1
+            group = summary["by_input_tokens"].setdefault(str(prompt["length_group"]), {"completed": 0, "failures": 0})
+            group["failures"] += 1
+            write_json(output / "summary.json", summary)
+            print(f"{prompt['prompt_id']}: out of GPU memory during {failure_phase}", flush=True)
+
+        for group_prompts in groups.values():
+            phase = "warmup"
+            current_prompt = None
             gc.collect()
             torch.cuda.empty_cache()
-            input_ids = torch.tensor([prompt["input_ids"]], dtype=torch.long, device="cuda:0")
-            phase = "inference"
-            result = greedy_decode(model, input_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache(input_ids.shape[-1]), measure_cuda=True)
-            del input_ids
-            phase = "scoring"
-            response = tokenizer.decode(result["output_ids"], skip_special_tokens=True)
-            score = score_passkey(response, prompt["expected_code"])
-            diagnostics = result["diagnostic_metrics"]
-            row = {
-                "prompt_id": current_prompt, "status": "completed", **score,
-                "input_tokens": prompt["input_tokens"], "output_tokens": result["output_tokens"],
-                "actual_position": prompt["actual_position"], "cache_reused": result["cache_reused"],
-                "prefill_cache_bytes": result["prefill_cache"]["storage_bytes"],
-                "final_cache_bytes": result["final_cache"]["storage_bytes"],
-                "ttft_ms": diagnostics["ttft_ms"], "decode_ms": diagnostics["decode_ms"],
-                "decode_tokens_per_second": diagnostics["decode_tokens_per_second"],
-                **{f"{stage}_peak_{kind}": count for stage in ("prefill", "decode") for kind, count in diagnostics[f"{stage}_peak"].items()},
-            }
-            append_jsonl(output / "predictions.jsonl", {**row, "response": response, "expected_code": prompt["expected_code"], "generation": result})
-            append_metrics(output / "metrics.csv", row)
-            summary["completed"] += 1
-            summary["correct"] += int(score["correct"])
-            summary["passkey_correct"] += int(score["passkey_correct"])
-            summary["accuracy"] = summary["correct"] / summary["completed"]
-            summary["passkey_accuracy"] = summary["passkey_correct"] / summary["completed"]
-            summary["leading_digits"] += score["leading_digits"]
-            summary["mean_leading_digits"] = summary["leading_digits"] / summary["completed"]
-            group = summary["by_input_tokens"].setdefault(str(prompt["input_tokens"]), {"completed": 0, "correct": 0, "passkey_correct": 0, "leading_digits": 0})
-            group["completed"] += 1
-            group["correct"] += int(score["correct"])
-            group["passkey_correct"] += int(score["passkey_correct"])
-            group["leading_digits"] += score["leading_digits"]
-            write_json(output / "summary.json", summary)
-            print(f"{current_prompt}: strict_correct={score['correct']}, passkey_correct={score['passkey_correct']}, leading_digits={score['leading_digits']}, input_tokens={prompt['input_tokens']}", flush=True)
+            try:
+                warmup = max(group_prompts, key=lambda prompt: prompt["input_tokens"])
+                warmup_ids = torch.tensor([warmup["input_ids"]], dtype=torch.long, device="cuda:0")
+                for _ in range(config["measurement"]["warmup_runs"]):
+                    greedy_decode(model, warmup_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache(warmup_ids.shape[-1]))
+                del warmup_ids
+            except torch.cuda.OutOfMemoryError as error:
+                for prompt in group_prompts:
+                    summary["attempted"] += 1
+                    record_failure(prompt, "warmup", error)
+                continue
+            for prompt in group_prompts:
+                current_prompt = prompt["prompt_id"]
+                summary["attempted"] += 1
+                phase = "input_transfer"
+                gc.collect()
+                torch.cuda.empty_cache()
+                try:
+                    input_ids = torch.tensor([prompt["input_ids"]], dtype=torch.long, device="cuda:0")
+                    phase = "inference"
+                    result = greedy_decode(model, input_ids, config["generation"]["max_new_tokens"], stop_ids, cache=new_cache(input_ids.shape[-1]), measure_cuda=True)
+                    del input_ids
+                except torch.cuda.OutOfMemoryError as error:
+                    record_failure(prompt, getattr(error, "kv_phase", phase), error)
+                    continue
+                phase = "scoring"
+                response = tokenizer.decode(result["output_ids"], skip_special_tokens=True)
+                score, reference = score_response(config, prompt, response)
+                diagnostics = result["diagnostic_metrics"]
+                row = {
+                    "prompt_id": current_prompt, "status": "completed", **score,
+                    "input_tokens": prompt["input_tokens"], "length_group": prompt["length_group"],
+                    "output_tokens": result["output_tokens"],
+                    "actual_position": prompt.get("actual_position"), "cache_reused": result["cache_reused"],
+                    "prefill_cache_bytes": result["prefill_cache"]["storage_bytes"],
+                    "final_cache_bytes": result["final_cache"]["storage_bytes"],
+                    "ttft_ms": diagnostics["ttft_ms"], "decode_ms": diagnostics["decode_ms"],
+                    "decode_tokens_per_second": diagnostics["decode_tokens_per_second"],
+                    **{f"{stage}_peak_{kind}": count for stage in ("prefill", "decode") for kind, count in diagnostics[f"{stage}_peak"].items()},
+                }
+                append_jsonl(output / "predictions.jsonl", {**row, "response": response, **reference, "generation": result})
+                append_metrics(output / "metrics.csv", row)
+                tally(summary, score)
+                for key in scores:
+                    summary[MEANS[key]] = summary[key] / summary["completed"]
+                tally(summary["by_input_tokens"].setdefault(str(prompt["length_group"]), {"completed": 0, "failures": 0}), score)
+                write_json(output / "summary.json", summary)
+                print(f"{current_prompt}: " + ", ".join(f"{key}={score[key]}" for key in scores) + f", input_tokens={prompt['input_tokens']}", flush=True)
         summary["status"] = "completed"
         return summary
     except Exception as error:
@@ -165,7 +224,7 @@ def run_pilot(config, output):
         failure = {"prompt_id": current_prompt, "status": "failed", "failure_phase": phase, "error_type": type(error).__name__}
         append_jsonl(output / "predictions.jsonl", failure)
         append_metrics(output / "metrics.csv", failure)
-        summary.update({"status": "failed", "failures": 1, "failure_phase": phase, "error_type": type(error).__name__})
+        summary.update({"status": "failed", "failures": summary["failures"] + 1, "failure_phase": phase, "error_type": type(error).__name__})
         if phase == "environment" and isinstance(error, RuntimeError):
             summary["error_message"] = str(error)
         else:
